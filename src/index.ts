@@ -9,6 +9,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { AssemblyAI } from "./api.js";
+import { DEFAULT_MAX_UPLOAD_MB, uploadLocalFile, uploadSchema } from "./upload.js";
 import {
   DEFAULT_TEXT_LIMIT,
   fail,
@@ -20,6 +21,20 @@ import {
 
 export function buildServer(client: AssemblyAI): McpServer {
   const server = new McpServer({ name: "assemblyai", version: "0.1.0" });
+
+  server.tool(
+    "upload_file",
+    "Upload a local audio or video file and get a URL that transcribe accepts.",
+    uploadSchema,
+    async ({ file_path, max_size_mb = DEFAULT_MAX_UPLOAD_MB }) => {
+      try {
+        const res = await uploadLocalFile(client, file_path, max_size_mb);
+        return ok({ ...res, hint: "Pass upload_url to transcribe as audio_url." });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
 
   server.tool(
     "transcribe",

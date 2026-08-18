@@ -2,6 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AssemblyAI, AssemblyAIError } from "./api.js";
 import { trim, waitForTranscript } from "./tools.js";
+import { uploadLocalFile } from "./upload.js";
+import { writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /** A fetch that answers from a script, and records what it was asked. */
 function fakeFetch(
@@ -112,4 +116,54 @@ test("trimming reports what it dropped, and leaves short text alone", () => {
 
 test("a missing key is refused at construction, not at the first call", () => {
   assert.throws(() => new AssemblyAI({ apiKey: "" }), /API key is required/);
+});
+
+test("uploading refuses a path that is not there, and says the path", async () => {
+  const { impl } = fakeFetch([{ json: {} }]);
+  const client = new AssemblyAI({ apiKey: "k", fetchImpl: impl });
+  await assert.rejects(
+    () => uploadLocalFile(client, "/nope/missing.mp3"),
+    /No file at \/nope\/missing\.mp3/,
+  );
+});
+
+test("uploading refuses a file over the ceiling and names both numbers", async () => {
+  const { impl } = fakeFetch([{ json: {} }]);
+  const client = new AssemblyAI({ apiKey: "k", fetchImpl: impl });
+  const tmp = join(tmpdir(), `aai-big-${process.pid}.bin`);
+  await writeFile(tmp, Buffer.alloc(3 * 1024 * 1024));
+  try {
+    await assert.rejects(() => uploadLocalFile(client, tmp, 1), /3\.0 MB, over the 1 MB limit/);
+  } finally {
+    await rm(tmp, { force: true });
+  }
+});
+
+test("uploading refuses an empty file rather than sending zero bytes", async () => {
+  const { impl } = fakeFetch([{ json: {} }]);
+  const client = new AssemblyAI({ apiKey: "k", fetchImpl: impl });
+  const tmp = join(tmpdir(), `aai-empty-${process.pid}.bin`);
+  await writeFile(tmp, "");
+  try {
+    await assert.rejects(() => uploadLocalFile(client, tmp), /is empty/);
+  } finally {
+    await rm(tmp, { force: true });
+  }
+});
+
+test("a real upload returns the URL and the size it sent", async () => {
+  const { impl, calls } = fakeFetch([{ json: { upload_url: "https://cdn.assemblyai.com/x" } }]);
+  const client = new AssemblyAI({ apiKey: "k", fetchImpl: impl });
+  const tmp = join(tmpdir(), `aai-ok-${process.pid}.bin`);
+  await writeFile(tmp, Buffer.alloc(1024));
+  try {
+    const res = await uploadLocalFile(client, tmp);
+    assert.equal(res.upload_url, "https://cdn.assemblyai.com/x");
+    assert.equal(res.size_bytes, 1024);
+    assert.equal(res.size_human, "1.0 KB");
+    const headers = calls[0].init.headers as Record<string, string>;
+    assert.equal(headers["content-type"], "application/octet-stream");
+  } finally {
+    await rm(tmp, { force: true });
+  }
 });

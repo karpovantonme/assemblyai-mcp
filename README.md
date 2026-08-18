@@ -36,6 +36,7 @@ Keys come from [the dashboard](https://www.assemblyai.com/dashboard).
 
 | Tool | What it does |
 |---|---|
+| `upload_file` | Upload a local audio or video file and get a URL `transcribe` accepts |
 | `transcribe` | Transcribe audio or video from a URL. Waits for the result by default |
 | `get_transcript` | Fetch a transcript by id, with its status if it is still running |
 | `list_transcripts` | Recent transcripts on the account |
