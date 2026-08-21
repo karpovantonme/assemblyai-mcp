@@ -1,6 +1,6 @@
 # assemblyai-mcp
 
-An MCP server for the [AssemblyAI](https://www.assemblyai.com) API. Transcription, subtitles, speaker turns, word search and LeMUR, exposed as tools an agent can call.
+An MCP server for the [AssemblyAI](https://www.assemblyai.com) API. Transcription, subtitles, speaker turns, word search and the LLM Gateway, exposed as tools an agent can call.
 
 Written because I needed one and there wasn't one.
 
@@ -45,8 +45,21 @@ Keys come from [the dashboard](https://www.assemblyai.com/dashboard).
 | `get_subtitles` | SRT or VTT for a completed transcript |
 | `search_transcript` | Where words are spoken, with counts and timestamps |
 | `get_speaker_turns` | Who said what, when the transcript was made with `speaker_labels` |
-| `ask_transcript` | Answer a question from one or more transcripts, through LeMUR |
-| `summarize_transcript` | Summarise transcripts through LeMUR |
+| `ask_transcript` | Answer a question from one or more transcripts, through the LLM Gateway |
+| `summarize_transcript` | Summarise transcripts through the LLM Gateway |
+
+## LeMUR is gone, and this uses what replaced it
+
+`/lemur/v3/generate/*` answers `404 Not found`. The work moved to the LLM
+Gateway, an OpenAI-shaped endpoint on its own host, and the two tools that
+reason over transcripts go there. One difference matters to a caller: LeMUR
+took transcript ids and fetched the text itself, the gateway takes text, so
+this server fetches each transcript and caps it before building the prompt.
+
+`qwen3.5-4b-32k-fast` is the default because it answers on a free account.
+Pass `model` for anything else. A model your account cannot use comes back as
+a 200 with the refusal inside the body, so it is read out and raised rather
+than returned as an empty answer.
 
 ## Three decisions worth knowing about
 
@@ -64,7 +77,9 @@ npm run build
 npm test
 ```
 
-The API client (`src/api.ts`) knows nothing about MCP and takes an injected `fetch`, so the tests run against a scripted transport with no network and no key. The tests cover what tends to break in a thin API wrapper: the key never reaching a URL, ids being escaped so a hostile id cannot reshape the path, non-JSON responses (subtitles arrive as text), error bodies surfacing the sentence the API wrote instead of a bare status, and the polling loop stopping on both `completed` and `error`.
+The API client (`src/api.ts`) knows nothing about MCP and takes an injected `fetch`, so the tests run against a scripted transport with no network and no key.
+
+All 9 tools have also been run end to end against the live API, installed from this repository rather than from the working copy: upload of a 4.3 MB file, transcription with speaker labels, SRT and VTT, word search, speaker turns, both gateway calls, and the listing. That run is what found the two defects the scripted tests could not: the word-search endpoint returns a JSON object under `content-type: text/html`, and LeMUR no longer exists. The tests cover what tends to break in a thin API wrapper: the key never reaching a URL, ids being escaped so a hostile id cannot reshape the path, non-JSON responses (subtitles arrive as text), error bodies surfacing the sentence the API wrote instead of a bare status, and the polling loop stopping on both `completed` and `error`.
 
 ## Note for AssemblyAI
 

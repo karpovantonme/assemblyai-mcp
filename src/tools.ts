@@ -15,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { DEFAULT_LLM_MODEL } from "./api.js";
 import type { AssemblyAI, Transcript } from "./api.js";
 
 /** Characters of transcript text returned before trimming kicks in. */
@@ -80,15 +81,19 @@ export const schemas = {
   ask_transcript: {
     transcript_ids: z.array(z.string()).min(1).describe("Transcripts to reason over"),
     question: z.string().describe("The question to answer from those transcripts"),
-    final_model: z
+    model: z
       .string()
       .optional()
-      .describe("LeMUR model to use. Omit for the account default"),
+      .describe(`LLM Gateway model. Default ${DEFAULT_LLM_MODEL}`),
   },
   summarize_transcript: {
     transcript_ids: z.array(z.string()).min(1).describe("Transcripts to summarise"),
     context: z.string().optional().describe("What the audio is, to steer the summary"),
     answer_format: z.string().optional().describe("Shape of the answer, e.g. bullet points"),
+    model: z
+      .string()
+      .optional()
+      .describe(`LLM Gateway model. Default ${DEFAULT_LLM_MODEL}`),
   },
 };
 

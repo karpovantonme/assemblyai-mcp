@@ -7,6 +7,16 @@
 
 const DEFAULT_BASE = "https://api.assemblyai.com";
 
+/**
+ * The LLM Gateway lives on its own host and speaks the OpenAI chat shape. It
+ * replaced LeMUR, whose `/lemur/v3/generate/*` paths now answer 404 with a
+ * bare `Not found`.
+ */
+const DEFAULT_LLM_BASE = "https://llm-gateway.assemblyai.com";
+
+/** The model used when the caller names none. Small, fast, and on the free tier. */
+export const DEFAULT_LLM_MODEL = "qwen3.5-4b-32k-fast";
+
 export type Fetcher = typeof fetch;
 
 export class AssemblyAIError extends Error {
@@ -23,18 +33,21 @@ export class AssemblyAIError extends Error {
 export interface ClientOptions {
   apiKey: string;
   baseUrl?: string;
+  llmBaseUrl?: string;
   fetchImpl?: Fetcher;
 }
 
 export class AssemblyAI {
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly llmBaseUrl: string;
   private readonly fetchImpl: Fetcher;
 
   constructor(opts: ClientOptions) {
     if (!opts.apiKey) throw new Error("An API key is required");
     this.apiKey = opts.apiKey;
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE).replace(/\/+$/, "");
+    this.llmBaseUrl = (opts.llmBaseUrl ?? DEFAULT_LLM_BASE).replace(/\/+$/, "");
     this.fetchImpl = opts.fetchImpl ?? fetch;
   }
 
@@ -50,7 +63,8 @@ export class AssemblyAI {
       headers["content-type"] = "application/json";
     }
 
-    const res = await this.fetchImpl(`${this.baseUrl}${path}`, { ...init, headers });
+    const url = path.startsWith("http") ? path : `${this.baseUrl}${path}`;
+    const res = await this.fetchImpl(url, { ...init, headers });
 
     if (!res.ok) {
       let body: unknown;
@@ -73,9 +87,21 @@ export class AssemblyAI {
       );
     }
 
-    const ct = res.headers.get("content-type") ?? "";
-    if (ct.includes("application/json")) return (await res.json()) as T;
-    return (await res.text()) as unknown as T;
+    // 🔴 The content-type header is not trusted, because it lies. The
+    // word-search endpoint returns a JSON object under `text/html`, and
+    // believing the header handed the caller a string where an object was
+    // expected. What the body starts with is the reliable signal, and it
+    // cannot misfire on subtitles: SRT starts with a digit, VTT with WEBVTT.
+    const text = await res.text();
+    const head = text.trimStart()[0];
+    if (head === "{" || head === "[") {
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        return text as unknown as T;
+      }
+    }
+    return text as unknown as T;
   }
 
   /** Upload local bytes and get back a URL the transcription endpoint accepts. */
@@ -129,15 +155,42 @@ export class AssemblyAI {
     return this.request(`/v2/transcript/${encodeURIComponent(id)}/word-search?${qs}`);
   }
 
-  async lemur(
-    endpoint: "summary" | "question-answer" | "action-items" | "task",
-    params: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.request(`/lemur/v3/generate/${endpoint}`, {
-      method: "POST",
-      body: JSON.stringify(params),
-    });
+  /**
+   * One turn through the LLM Gateway, the OpenAI chat shape.
+   *
+   * This is what LeMUR became. The old endpoints answer 404, so a server that
+   * still calls them has two dead tools and no way to tell.
+   */
+  async chat(
+    prompt: string,
+    model: string = DEFAULT_LLM_MODEL,
+    maxTokens = 1000,
+  ): Promise<{ text: string; model: string; tokens?: number }> {
+    const res = await this.request<ChatCompletion>(
+      `${this.llmBaseUrl}/v1/chat/completions`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: maxTokens,
+        }),
+      },
+    );
+    const errors = res?.metadata?.errors;
+    if (errors?.length) throw new AssemblyAIError(errors.join("; "), 400, res);
+    return {
+      text: res?.choices?.[0]?.message?.content ?? "",
+      model,
+      tokens: res?.usage?.total_tokens,
+    };
   }
+}
+
+export interface ChatCompletion {
+  choices?: Array<{ message?: { content?: string } }>;
+  usage?: { total_tokens?: number };
+  metadata?: { errors?: string[] };
 }
 
 export interface Transcript {

@@ -167,3 +167,68 @@ test("a real upload returns the URL and the size it sent", async () => {
     await rm(tmp, { force: true });
   }
 });
+
+test("a JSON body under a text/html header is still parsed", async () => {
+  // 🔴 Not hypothetical. The word-search endpoint answers with a JSON object
+  // and `content-type: text/html`, and trusting the header handed the caller
+  // a string. `res.matches.map` then threw on a live transcript while every
+  // test here passed.
+  const client = new AssemblyAI({
+    apiKey: "k",
+    fetchImpl: async () =>
+      new Response('{"total_count":1,"matches":[{"text":"a","count":1,"timestamps":[[10,20]]}]}', {
+        status: 200,
+        headers: { "content-type": "text/html; charset=UTF-8" },
+      }),
+  });
+  const res = await client.wordSearch("id", ["a"]);
+  assert.equal(res.total_count, 1);
+  assert.equal(res.matches[0].text, "a");
+});
+
+test("subtitles are still returned as text, not mistaken for JSON", async () => {
+  const client = new AssemblyAI({
+    apiKey: "k",
+    fetchImpl: async () =>
+      new Response("1\n00:00:00,048 --> 00:00:03,832\nSmoke from wildfires\n", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+  });
+  const srt = await client.subtitles("id", "srt");
+  assert.equal(typeof srt, "string");
+  assert.match(srt, /^1\n00:00/);
+});
+
+test("the chat call goes to the gateway host and returns the message text", async () => {
+  let seen = "";
+  const client = new AssemblyAI({
+    apiKey: "k",
+    fetchImpl: async (url) => {
+      seen = String(url);
+      return new Response('{"choices":[{"message":{"content":"works"}}],"usage":{"total_tokens":21}}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  const res = await client.chat("hello");
+  assert.equal(seen, "https://llm-gateway.assemblyai.com/v1/chat/completions");
+  assert.equal(res.text, "works");
+  assert.equal(res.tokens, 21);
+});
+
+test("the gateway reports a refused model in metadata, with status 200", async () => {
+  // A 400 arrives with the errors inside the body rather than as a status the
+  // caller can see, so it has to be read out or the tool returns an empty
+  // answer and calls it success.
+  const client = new AssemblyAI({
+    apiKey: "k",
+    fetchImpl: async () =>
+      new Response('{"metadata":{"errors":["Your account does not have access to this LLM Gateway model"]}}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  await assert.rejects(() => client.chat("hi", "some-paid-model"), /does not have access/);
+});

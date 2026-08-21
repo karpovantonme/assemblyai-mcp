@@ -179,16 +179,17 @@ export function buildServer(client: AssemblyAI): McpServer {
 
   server.tool(
     "ask_transcript",
-    "Ask a question answered from one or more transcripts, using LeMUR.",
+    "Ask a question answered from one or more transcripts.",
     schemas.ask_transcript,
-    async ({ transcript_ids, question, final_model }) => {
+    async ({ transcript_ids, question, model }) => {
       try {
-        const res = await client.lemur("question-answer", {
-          transcript_ids,
-          questions: [{ question }],
-          ...(final_model ? { final_model } : {}),
-        });
-        return ok(res);
+        const body = await gatherTranscripts(client, transcript_ids);
+        const answer = await client.chat(
+          `${body}\n\nAnswer this question from the transcripts above. ` +
+            `Answer only from what they say.\n\n${question}`,
+          model,
+        );
+        return ok({ ...answer, transcripts: transcript_ids.length });
       } catch (e) {
         return fail(e);
       }
@@ -197,16 +198,18 @@ export function buildServer(client: AssemblyAI): McpServer {
 
   server.tool(
     "summarize_transcript",
-    "Summarise one or more transcripts, using LeMUR.",
+    "Summarise one or more transcripts.",
     schemas.summarize_transcript,
-    async ({ transcript_ids, context, answer_format }) => {
+    async ({ transcript_ids, context, answer_format, model }) => {
       try {
-        const res = await client.lemur("summary", {
-          transcript_ids,
-          ...(context ? { context } : {}),
-          ...(answer_format ? { answer_format } : {}),
-        });
-        return ok(res);
+        const body = await gatherTranscripts(client, transcript_ids);
+        const answer = await client.chat(
+          `${body}\n\nSummarise the transcripts above.` +
+            (context ? ` They are: ${context}.` : "") +
+            (answer_format ? ` Answer as: ${answer_format}.` : ""),
+          model,
+        );
+        return ok({ ...answer, transcripts: transcript_ids.length });
       } catch (e) {
         return fail(e);
       }
@@ -214,6 +217,28 @@ export function buildServer(client: AssemblyAI): McpServer {
   );
 
   return server;
+}
+
+/**
+ * The gateway takes text, not transcript ids: LeMUR used to fetch them itself
+ * and its replacement does not. Each transcript is capped, because a handful
+ * of long ones would otherwise run past the model's context in one prompt.
+ */
+async function gatherTranscripts(
+  client: AssemblyAI,
+  ids: string[],
+  perTranscript = 12_000,
+): Promise<string> {
+  const parts: string[] = [];
+  for (const id of ids) {
+    const t = await client.getTranscript(id);
+    if (t.status !== "completed") {
+      throw new Error(`Transcript ${id} is ${t.status}, so there is nothing to read yet.`);
+    }
+    const { text, note } = trim(t.text ?? "", perTranscript);
+    parts.push(`--- transcript ${id} ---\n${text}${note ? `\n[${note}]` : ""}`);
+  }
+  return parts.join("\n\n");
 }
 
 async function main() {
