@@ -6,14 +6,16 @@ Written because I needed one and there wasn't one.
 
 ## Install
 
+Not on npm yet, so it installs from here. npm clones it and runs the build itself.
+
 ```bash
-npm install -g assemblyai-mcp
+npm install -g github:karpovantonme/assemblyai-mcp
 ```
 
 Claude Code:
 
 ```bash
-claude mcp add assemblyai -e ASSEMBLYAI_API_KEY=your-key -- npx -y assemblyai-mcp
+claude mcp add assemblyai -e ASSEMBLYAI_API_KEY=your-key -- npx -y github:karpovantonme/assemblyai-mcp
 ```
 
 Anything else that speaks MCP over stdio:
@@ -23,7 +25,7 @@ Anything else that speaks MCP over stdio:
   "mcpServers": {
     "assemblyai": {
       "command": "npx",
-      "args": ["-y", "assemblyai-mcp"],
+      "args": ["-y", "github:karpovantonme/assemblyai-mcp"],
       "env": { "ASSEMBLYAI_API_KEY": "your-key" }
     }
   }
